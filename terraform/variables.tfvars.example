@@ -1,0 +1,6 @@
+sqlmi-hostname = "databasehost.dnssufix.database.windows.net"
+sqlmi-username = "username"
+sqlmi-password = "password"
+bookings-app-rg = "app_resource_group" 
+bookings-app-network-rg = "vnet_resource_group"
+vmss-image-id = "image_resource_id"

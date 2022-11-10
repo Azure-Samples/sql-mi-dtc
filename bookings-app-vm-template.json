@@ -1,0 +1,129 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+            "location": {
+            "type": "string"
+            },
+            "name": {
+            "type": "string"
+            },
+            "identity": {
+            "type": "string"
+            },
+            "sqlmi_dns_suffix": {
+                "type": "string"
+            },
+            "artifact_storage_account": {
+                "type": "string"
+            },
+            "artifact_container": {
+                "type": "string"
+            }
+        },
+    "resources": [
+        {
+            "type": "Microsoft.VirtualMachineImages/imageTemplates",
+            "apiVersion": "2021-10-01",
+            "location": "[parameters('location')]",
+            "name": "[parameters('name')]",
+            "dependsOn": [],
+            "identity": {
+            "type": "UserAssigned",
+                  "userAssignedIdentities": {
+                    "[concat( resourceGroup().id, '/providers/Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('identity'))]": {}
+                }
+                },
+            "properties": {
+                "vmProfile": {
+                    "vmSize": "Standard_D4s_v4",
+                    "userAssignedIdentities": [
+                        "[concat( resourceGroup().id, '/providers/Microsoft.ManagedIdentity/userAssignedIdentities/', parameters('identity'))]"
+                    ]
+                },
+                "source": {
+                    "type": "PlatformImage",
+                        "publisher": "MicrosoftWindowsServer",
+                        "offer": "WindowsServer",
+                        "sku": "2022-Datacenter-g2",
+                        "version": "latest"
+                    
+                },
+                "customize": [
+                    {
+                        "type": "PowerShell",
+                        "name": "Enable IIS",
+                        "runElevated": false,
+                        "inline": [
+                            "Install-WindowsFeature -name Web-Server -IncludeManagementTools",
+                            "Install-WindowsFeature -name Web-Asp-Net45"
+                        ]
+                    },
+                    {
+                        "type": "PowerShell",
+                        "name": "Enable DTC",
+                        "runElevated": false,
+                        "inline": [
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name DomainControllerState -Value 0",
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name LuTransactions -Value 1",
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name NetworkDtcAccess -Value 1",
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name NetworkDtcAccessAdmin -Value 1",
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name NetworkDtcAccessClients -Value 1",
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name NetworkDtcAccessInbound -Value 1",
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name NetworkDtcAccessOutbound -Value 1",
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name NetworkDtcAccessTip -Value 0",
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name NetworkDtcAccessTransactions -Value 1",
+                            "Set-ItemProperty -Path HKLM:\\Software\\Microsoft\\MSDTC\\Security -Name XaTransactions -Value 1",
+                            "Set-DtcNetworkSetting -DtcName \"Local\" -AuthenticationLevel \"NoAuth\" -Confirm:$false",
+                            "[concat('$list = (Get-DnsClientGlobalSetting).SuffixSearchList += ','\"',parameters('sqlmi_dns_suffix'),'\"')]",
+                            "Set-DnsClientGlobalSetting -SuffixSearchList $list"
+                        ]
+                    },
+                    {
+                        "type": "PowerShell",
+                        "name": "Disable Firewall",
+                        "runElevated": false,
+                        "inline": [
+                            "Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False"
+                        ]
+                    },
+                    {
+                        "type": "PowerShell",
+                        "name": "Deploy Artifact",
+                        "runElevated": false,
+                        "inline": [
+                            "Install-PackageProvider -Name Nuget -Force",
+                            "Install-Module -Name Az.Storage -Scope CurrentUser -Repository PSGallery -Force",
+                            "Install-Module -Name Az.Accounts -Scope CurrentUser -Repository PSGallery -Force",
+                            "Connect-AzAccount -Identity",
+                            "[concat('$storageAccount = Get-AzStorageAccount -Name ',parameters('artifact_storage_account'),' -ResourceGroupName ',resourceGroup().name)]",
+                            "[concat('Get-AzStorageBlobContent -Container ','\"',parameters('artifact_container'),'\"',' -Blob \"WebApp.zip\" -Destination \"C:\\\" -Context $storageAccount.Context')]",
+                            "Remove-Item C:\\InetPub\\wwwroot\\* -Recurse -Force",
+                            "Expand-Archive C:\\WebApp.zip -DestinationPath C:\\InetPub\\wwwroot",
+                            "New-Item C:\\InetPub\\wwwroot\\config -Type Directory"
+                        ]
+                    },
+                    {
+                        "type": "PowerShell",
+                        "runElevated": true,
+                        "name": "DeprovisioningScript",
+                        "inline": [
+                          "((Get-Content -path C:\\DeprovisioningScript.ps1 -Raw) -replace 'Sysprep.exe /oobe /generalize /quiet /quit','Sysprep.exe /oobe /generalize /quit /mode:vm' ) | Set-Content -Path C:\\DeprovisioningScript.ps1"
+                         ]
+                    }
+                ],
+                "distribute": 
+                    [
+                        {   "type":"ManagedImage",
+                            "imageId": "[concat( resourceGroup().id, '/providers/Microsoft.Compute/images/', parameters('name'))]",
+                            "location": "[parameters('location')]",
+                            "runOutputName": "[parameters('name')]"
+                        }
+                    ]
+                }
+            }
+    ]
+}
+
+
+

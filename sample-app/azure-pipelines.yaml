@@ -1,0 +1,76 @@
+trigger:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - sample-app
+    - bookings-app-vm-template.json
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+- group: bookings-app
+- name: solution
+  value: '**/*.sln'
+- name: buildPlatform
+  value: 'Any CPU'
+- name: buildConfiguration
+  value: 'Release'
+
+steps:
+
+- task: NuGetToolInstaller@1
+
+- task: NuGetCommand@2
+  inputs:
+    restoreSolution: '$(solution)'
+
+- task: VSBuild@1
+  displayName: Build Application
+  inputs:
+    solution: '$(solution)'
+    msbuildArgs: '/p:outDir="$(build.artifactStagingDirectory)\WebApp" /p:Configuration=Release'
+    platform: '$(buildPlatform)'
+    configuration: '$(buildConfiguration)'
+
+- task: ArchiveFiles@2
+  displayName: Create Artifact
+  inputs:
+    rootFolderOrFile: '$(build.artifactStagingDirectory)\WebApp\_PublishedWebsites\MSDTCApp'
+    includeRootFolder: false
+    archiveType: 'zip'
+    archiveFile: '$(build.artifactStagingDirectory)\WebApp.zip' 
+    replaceExistingArchive: true 
+
+- task: AzureFileCopy@4
+  displayName: Publishing Artifact
+  inputs:
+    sourcePath: '$(build.artifactStagingDirectory)/WebApp.zip'
+    azureSubscription: service-connection
+    destination: azureBlob
+    storage: '$(artifactStorageAccount)'
+    containerName: '$(artifactContainer)'
+
+- task: AzureCLI@2
+  displayName: Build VM Image
+  inputs:
+    azureSubscription: service-connection
+    scriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      Write-Host "Deploying Image Template"
+      az deployment group create --resource-group $(resourceGroup) --template-file bookings-app-vm-template.json --parameters location=$(location) name=bookings-app-$(Build.BuildNumber) identity=$(managedIdentity) sqlmi_dns_suffix=$(sqlDnsSuffix) artifact_storage_account=$(artifactStorageAccount) artifact_container=$(artifactContainer)
+      Write-Host "Building VM Image"
+      az resource invoke-action --resource-group fleetcor --resource-type Microsoft.VirtualMachineImages/imageTemplates -n bookings-app-$(Build.BuildNumber) --action Run
+      az resource delete -g $(resourceGroup) -n bookings-app-$(Build.BuildNumber) --resource-type Microsoft.VirtualMachineImages/imageTemplates
+
+- task: AzureCLI@2
+  displayName: Update VMSS Image
+  inputs:
+    azureSubscription: service-connection
+    scriptType: ps
+    scriptLocation: inlineScript
+    inlineScript: |
+      az vmss update --name $(vmssName) --resource-group $(resourceGroup) --set virtualMachineProfile.storageProfile.imageReference.id=/subscriptions/$(subscriptionId)/resourceGroups/$(resourceGroup)/providers/Microsoft.Compute/images/bookings-app-$(Build.BuildNumber)

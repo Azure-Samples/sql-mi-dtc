@@ -74,7 +74,7 @@ $ terraform apply -var-file='variables.tfvars'
 
 Get the application url from terraform's output and open it in your browser.
 
-From now on, every push to the main branch will trigger the pipeline and deploy the application to the Virtual Machine Scale Set.
+From now on, every push to the main branch with changes to the sample-app or its vm image template will trigger the pipeline and deploy the application to the Virtual Machine Scale Set.
 
 ### Docs
 
